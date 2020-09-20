@@ -19,9 +19,10 @@ class TimeseriesGenerator(Sequence):
     data : Indexable generator (such as list or Numpy array)
         Shoulf contain consecutive data points (timesteps).
         The data should be at 2D, and axis 0 is expected to be the time dimension.
-    targets : Indexable generator (such as list or Numpy array)
+    targets : Indexable generator (such as list or Numpy array), optional
         Targets corresponding to timesteps in `data`.
         It should have same length as `data`.
+        Default is None.
     length : int
         Length of the output sequences (in number of timesteps).
         Default is 1.
@@ -34,7 +35,7 @@ class TimeseriesGenerator(Sequence):
         For stride `s`, consecutive output samples would
         be centered around `data[i]`, `data[i+s]`, `data[i+2*s]`, etc.
         Default is 1.
-    target_shift : int
+    gap : int
         Number of timesteps by which target should be shifted corresponding
         to the last row in the sampled sequence.
         Default is 0.
@@ -86,11 +87,11 @@ class TimeseriesGenerator(Sequence):
 
     def __init__(self,
                  data: np.ndarray,
-                 targets: np.ndarray,
+                 targets: Optional[np.ndarray] = None,
                  length: int = 1,
                  sampling_rate: int = 1,
                  stride: int = 1,
-                 target_shift: int = 0,
+                 gap: int = 0,
                  start_index: int = 0,
                  end_index: Optional[int] = None,
                  shuffle: bool = False,
@@ -99,7 +100,7 @@ class TimeseriesGenerator(Sequence):
                  random_state: Any = None):
 
         # Validate input lengths
-        if len(data) != len(targets):
+        if targets is not None and len(data) != len(targets):
             raise ValueError('Data and targets have to be' +
                              ' of same length. '
                              'Data length is {}'.format(len(data)) +
@@ -129,7 +130,8 @@ class TimeseriesGenerator(Sequence):
         self.length = length
         self.sampling_rate = sampling_rate
         self.stride = stride
-        self.target_shift = target_shift
+        self.gap = gap
+        self.target_shift = gap + length - 1
         self.start_index = start_index
         self.end_index = end_index
         self.shuffle = shuffle
@@ -139,7 +141,7 @@ class TimeseriesGenerator(Sequence):
 
     def __len__(self):
         n_elements = self.end_index - self.start_index + 1
-        n_minus_shift_len = n_elements - self.target_shift - (self.length - 1)
+        n_minus_shift_len = n_elements - self.target_shift
         n_batches = np.ceil(n_minus_shift_len / (self.batch_size * self.stride)).astype(int)
         return n_batches
 
@@ -148,7 +150,7 @@ class TimeseriesGenerator(Sequence):
             # Randomly sample starting indices of each sequence
             seq_starts = self.random_state.randint(
                 self.start_index,
-                self.end_index + 1 - self.target_shift - (self.length - 1),
+                self.end_index + 1 - self.target_shift,
                 size=self.batch_size
             )
         else:
@@ -161,7 +163,7 @@ class TimeseriesGenerator(Sequence):
             seq_starts = np.arange(i,
                                    min(
                                        i + self.batch_size * self.stride,
-                                       self.end_index + 1 - self.target_shift - (self.length - 1)
+                                       self.end_index + 1 - self.target_shift
                                    ),
                                    self.stride)
 
@@ -170,11 +172,13 @@ class TimeseriesGenerator(Sequence):
                             for start in seq_starts])
 
         # Sample corresponding targets
-        targets = np.array([self.targets[start + self.target_shift + (self.length - 1)]
-                            for start in seq_starts])
+        targets = None
+        if self.targets is not None:
+            targets = np.array([self.targets[start + self.target_shift]
+                                for start in seq_starts])
 
         # Reverse the sampled sequences, but not the targets
         if self.reverse:
-            return samples[:, ::-1, ...], targets
+            samples = samples[:, ::-1, ...]
 
-        return samples, targets
+        return samples, targets if self.targets is not None else samples
